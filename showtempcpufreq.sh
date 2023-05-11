@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+
 #添加硬盘信息的控制变量，如果你想不显示硬盘信息就设置为0
 #NVME硬盘
 sNVMEInfo=1
@@ -8,10 +9,9 @@ sODisksInfo=1
 #debug，显示修改后的内容，用于调试
 dmode=0
 
-
-
 #脚本路径
 sdir=$(cd $(dirname ${BASH_SOURCE[0]}); pwd)
+cd "$sdir"
 sname=`awk -F '/' '{print $NF}' <<< ${BASH_SOURCE[0]}`
 sap=$sdir/$sname
 echo "脚本路径：$sap"
@@ -97,76 +97,12 @@ esac
 echo 备份源文件
 backup
 
-tmpf=.sdfadfasdf.tmp
-
-cat > $tmpf << 'EOF'
-	{
-		itemId: 'thermal',
-		colspan: 2,
-		printBar: false,
-		title: gettext('温度'),
-		textField: 'thermalstate',
-		renderer:function(value){
-			//value进来的值是有换行符的
-			
-			let b = value.trim().split(/\)\s+(?=[A-z]+-)/).sort();
-			let c = b.map(function (v){
-				let name = v.match(/^[^-]+/)[0].toUpperCase() + ': ';
-				
-				let temp = v.match(/(?<=:\s+\+)[\d\.]+/g).map( v => v + '°C');
-				
-				if (/coretemp/i.test(name)) {
-					name = 'CPU温度: ';
-					temp = temp[0] + '(' +   temp.slice(1).join(', ') + ')';
-				} else if (/acpitz/i.test(name)) {
-					name = '主板: '
-					temp = temp[0];
-				} else { 
-					temp = temp[0];
-				}
-				
-				return name + temp;
-			});
-			//排序，把cpu温度放最前
-			//console.log(c);
-			
-			c.unshift(c.splice(c.findIndex(v => /CPU温度/i.test(v)), 1));
-			//console.log(c)
-			c = c.join(' | ');
-			// console.log(c);
-			return c;
-		 }
-	},
-	{
-		  itemId: 'cpumhz',
-		  colspan: 2,
-		  printBar: false,
-		  title: gettext('CPU频率'),
-		  textField: 'cpure',
-		  renderer:function(v){
-			//return v;
-			let m = v.match(/(?<=cpu[^\d]+)\d+/ig);
-			let i=0
-			let m2 = m.map(e =>{
-				let t = `${i}: ${e}`;
-				i++
-				return t;
-			});
-			m2 = m2.join(' | ');
-			let gov = v.match(/(?<=gov:\s*).+/i)[0].toUpperCase();
-			let min = v.match(/(?<=min[^\d+]+)\d+/i)[0]/1000;
-			let max = v.match(/(?<=max[^\d+]+)\d+/i)[0]/1000;
-			return `${m2} | MAX: ${max} | MIN: ${min} | 调速器: ${gov}`
-		 }
-	},
-EOF
-
 
 tmpf0=.dfadfasdf.tmp
 
 cat > $tmpf0 << 'EOF'
-$res->{thermalstate} = `sensors`;
-$res->{cpure} = `
+$res->{thermalstate} = `sensors -A`;
+$res->{cpuFreq} = `
 	cat /proc/cpuinfo | grep -i  "cpu mhz"
 	echo -n 'gov:'
 	cat /sys/devices/system/cpu/cpufreq/policy0/scaling_governor
@@ -176,6 +112,70 @@ $res->{cpure} = `
 	cat /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq
 `;
 EOF
+
+
+tmpf=.sdfadfasdf.tmp
+
+cat > $tmpf << 'EOF'
+	{
+		itemId: 'thermal',
+		colspan: 2,
+		printBar: false,
+		title: gettext('温度(°C)'),
+		textField: 'thermalstate',
+		renderer:function(value){
+			//value进来的值是有换行符的
+			
+			let b = value.trim().split(/\s+(?=^\w+-)/m).sort();
+			let c = b.map(function (v){
+				let name = v.match(/^[^-]+/)[0].toUpperCase();
+				
+				let temp = v.match(/(?<=:\s+\+?)-?\d+/g);
+				
+				if (/coretemp/i.test(name)) {
+					name = 'CPU';
+					temp = temp[0] + ' ( ' +   temp.slice(1).join(' | ') + ' )';
+				} else {
+					temp = temp[0];
+				}
+				
+				let crit = v.match(/(?<=\bcrit\b[^+]+\+)\d+/);
+				
+				
+				return name + ': ' + temp + ( crit? ` ,crit: ${crit[0]}` : '');
+			});
+			
+			//console.log(c);
+			//排序，把cpu温度放最前
+			let cpuIdx = c.findIndex(v => /CPU/i.test(v) );
+			if (cpuIdx > 0) {
+				c.unshift(c.splice(cpuIdx, 1)[0]);
+			}
+			
+			// console.log(c)
+			c = c.join(' | ');
+			return c;
+		 }
+	},
+	{
+		  itemId: 'cpumhz',
+		  colspan: 2,
+		  printBar: false,
+		  title: gettext('CPU频率(GHz)'),
+		  textField: 'cpuFreq',
+		  renderer:function(v){
+			//return v;
+			let m = v.match(/(?<=cpu[^\d]+)\d+/ig);
+			let m2 = m.map( e => ( e / 1000 ).toFixed(1) );
+			m2 = m2.join(' | ');
+			let gov = v.match(/(?<=gov:\s*).+/i)[0].toUpperCase();
+			let min = (v.match(/(?<=min[^\d+]+)\d+/i)[0]/1000000).toFixed(1);
+			let max = (v.match(/(?<=max[^\d+]+)\d+/i)[0]/1000000).toFixed(1);
+			return `${m2} | MAX: ${max} | MIN: ${min} | 调速器: ${gov}`
+		 }
+	},
+EOF
+
 
 #检测nvme硬盘
 echo 检测系统中的NVME硬盘
@@ -195,10 +195,10 @@ EOF
 			  itemId: 'nvme${nvi}0',
 			  colspan: 2,
 			  printBar: false,
-			  title: gettext('NVME硬盘${nvi}'),
+			  title: gettext('NVME${nvi}'),
 			  textField: 'nvme${nvi}',
 			  renderer:function(value){
-					//return value;
+				//return value;
 				try{
 					let  v = JSON.parse(value);
 					//名字
@@ -207,18 +207,49 @@ EOF
 						return '找不到硬盘，直通或已被卸载';
 					}
 					// 温度
-					let temp = "温度: " + v.temperature.current + '°C';
-					// 通电时间
-					let pot = "通电: " + v.power_on_time.hours + '时' + ',次: '+ v.power_cycle_count;
-					let log = v.nvme_smart_health_information_log;
-					let read = (log.data_units_read / 1956882).toFixed(1) + 'T';
-					let write = (log.data_units_written / 1956882).toFixed(1) + 'T'
+					let temp = v.temperature?.current;
+					temp = ( temp !== undefined ) ? " | " + temp + '°C' : '' ;
 					
+					// 通电时间
+					let pot = v.power_on_time?.hours;
+					let poth = v.power_cycle_count;
+					
+					pot = ( pot !== undefined ) ? (" | 通电: " + pot + '时' + ( poth ? ',次: '+ poth : '' )) : '';
+					
+					// 读写
+					let log = v.nvme_smart_health_information_log;
+					let rw=''
+					let health=''
+					if (log) {
+						let read = log.data_units_read;
+						let write = log.data_units_written;
+						read = read ? (log.data_units_read / 1956882).toFixed(1) + 'T' : '';
+						write = write ? (log.data_units_written / 1956882).toFixed(1) + 'T' : '';
+						if (read && write) {
+							rw = ' | R/W: ' + read + '/' + write;
+						}
+						let pu = log.percentage_used;
+						let me = log.media_errors;
+						if ( pu !== undefined ) {
+							health = ' | 健康: ' + ( 100 - pu ) + '%'
+							if ( me !== undefined ) {
+								health += ',0E: ' + me
+							}
+						}
+					}
+
 					// smart状态
-					let smart = 'SMART: ' + (v.smart_status.passed? '正常' : '警告！');
-					let t = model + ' | ' + temp + ' | ' + pot + ' | ' + '读/写: ' + read + '/' + write + ' | ' + smart;
-					return t;
+					let smart = v.smart_status?.passed;
+					if (smart === undefined ) {
+						smart = '';
+					} else {
+						smart = ' | SMART: ' + (smart ? '正常' : '警告!');
+					}
+					
+					
+					let t = model  + temp + health + pot + rw + smart;
 					//console.log(t);
+					return t;
 				}catch(e){
 					return '无法获得有效消息';
 				};
@@ -283,15 +314,27 @@ EOF
 						return '找不到硬盘，直通或已被卸载';
 					}
 					// 温度
-					let temp = "温度: " + v.temperature.current + '°C';
+					let temp = v.temperature?.current;
+					temp = ( temp !== undefined ) ? " | 温度: " + temp + '°C' : '' ;
+					
 					// 通电时间
-					let pot = "通电: " + v.power_on_time.hours + '时' + ',次: '+ v.power_cycle_count;
-					let log = v.nvme_smart_health_information_log;
+					let pot = v.power_on_time?.hours;
+					let poth = v.power_cycle_count;
+					
+					pot = ( pot !== undefined ) ? (" | 通电: " + pot + '时' + ( poth ? ',次: '+ poth : '' )) : '';
+					
 					// smart状态
-					let smart = 'SMART: ' + (v.smart_status.passed? '正常' : '警告！');
-					let t = model + ' | ' + temp + ' | ' + pot + ' | ' + smart;
-					return t;
+					let smart = v.smart_status?.passed;
+					if (smart === undefined ) {
+						smart = '';
+					} else {
+						smart = ' | SMART: ' + (smart ? '正常' : '警告!');
+					}
+					
+					
+					let t = model + temp  + pot + smart;
 					//console.log(t);
+					return t;
 				}catch(e){
 					return '无法获得有效消息';
 				};
@@ -407,7 +450,12 @@ echo 开始修改proxmoxlib.js文件
 echo 去除订阅弹窗
 
 if [ "$(sed -n '/\/nodes\/localhost\/subscription/{=;p;q}' "$plib")" ];then 
-	sed -i '/\/nodes\/localhost\/subscription/,+10s/Ext.Msg.show/void/' "$plib" 
+	sed -i '/\/nodes\/localhost\/subscription/,+10{
+		/res === null/{
+			N
+			s/(.*)/(false)/
+		}
+	}' "$plib" 
 	
 	[ $dmode -eq 1 ] && sed -n "/\/nodes\/localhost\/subscription/,+10p" "$plib"
 else 
